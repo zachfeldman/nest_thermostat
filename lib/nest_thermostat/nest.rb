@@ -6,7 +6,7 @@ require 'uri'
 module NestThermostat
   class Nest
     attr_accessor :login_url, :user_agent, :auth, :login, :token, :user_id,
-      :transport_url, :transport_host, :structure_id, :device_id, :headers
+      :transport_url, :transport_host, :structure_id, :device_id, :headers, :thermostats
 
     attr_reader :temperature_scale
 
@@ -44,80 +44,103 @@ module NestThermostat
     def status
       request = HTTParty.get("#{self.transport_url}/v2/mobile/user.#{self.user_id}", headers: self.headers) rescue nil
       result = JSON.parse(request.body) rescue nil
-
       self.structure_id = result['user'][user_id]['structures'][0].split('.')[1]
       self.device_id    = result['structure'][structure_id]['devices'][0].split('.')[1]
 
+      if result['structure'][structure_id]['devices'].length > 1
+        self.thermostats = []
+        result['structure'][structure_id]['devices'].each do |device|
+          the_device_id = device.split('.')[1]
+          self.thermostats.push({
+              structure_id: result['user'][user_id]['structures'][0].split('.')[1],
+              device_id: the_device_id,
+              current_temp: convert_temp_for_get(result["shared"][the_device_id]["current_temperature"]).ceil,
+              target_temp: convert_temp_for_get(result["shared"][the_device_id]["target_temperature"]).ceil,
+              name: result["shared"][the_device_id]["name"]
+          })
+        end
+      end
       result
     end
 
-    def public_ip
-      status["track"][self.device_id]["last_ip"].strip
+    def public_ip(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      status["track"][device_id_number]["last_ip"].strip
     end
 
-    def leaf?
-      status["device"][self.device_id]["leaf"]
+    def leaf?(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      status["device"][device_id_number]["leaf"]
     end
 
-    def humidity
-      status["device"][self.device_id]["current_humidity"]
+    def humidity(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      status["device"][device_id_number]["current_humidity"]
     end
 
-    def current_temperature
-      convert_temp_for_get(status["shared"][self.device_id]["current_temperature"])
+    def current_temperature(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      convert_temp_for_get(status["shared"][device_id_number]["current_temperature"])
     end
     alias_method :current_temp, :current_temperature
 
-    def temperature
-      convert_temp_for_get(status["shared"][self.device_id]["target_temperature"])
+    def temperature(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      convert_temp_for_get(status["shared"][device_id_number]["target_temperature"])
     end
     alias_method :temp, :temperature
 
-    def temperature_low
-      convert_temp_for_get(status["shared"][self.device_id]["target_temperature_low"])
+    def temperature_low(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      convert_temp_for_get(status["shared"][device_id_number]["target_temperature_low"])
     end
     alias_method :temp_low, :temperature_low
 
-    def temperature_high
-      convert_temp_for_get(status["shared"][self.device_id]["target_temperature_high"])
+    def temperature_high(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      convert_temp_for_get(status["shared"][device_id_number]["target_temperature_high"])
     end
     alias_method :temp_high, :temperature_high
 
-    def temperature=(degrees)
+    def temperature=(degrees, device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
       degrees = convert_temp_for_set(degrees)
 
       request = HTTParty.post(
-        "#{self.transport_url}/v2/put/shared.#{self.device_id}",
+        "#{self.transport_url}/v2/put/shared.#{device_id_number}",
         body: %Q({"target_change_pending":true,"target_temperature":#{degrees}}),
         headers: self.headers
       ) rescue nil
     end
     alias_method :temp=, :temperature=
 
-    def temperature_low=(degrees)
+    def temperature_low=(degrees, device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
       degrees = convert_temp_for_set(degrees)
 
       request = HTTParty.post(
-          "#{self.transport_url}/v2/put/shared.#{self.device_id}",
+          "#{self.transport_url}/v2/put/shared.#{device_id_number}",
           body: %Q({"target_change_pending":true,"target_temperature_low":#{degrees}}),
           headers: self.headers
       ) rescue nil
     end
     alias_method :temp_low=, :temperature_low=
 
-    def temperature_high=(degrees)
+    def temperature_high=(degrees, device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
       degrees = convert_temp_for_set(degrees)
 
       request = HTTParty.post(
-          "#{self.transport_url}/v2/put/shared.#{self.device_id}",
+          "#{self.transport_url}/v2/put/shared.#{device_id_number}",
           body: %Q({"target_change_pending":true,"target_temperature_high":#{degrees}}),
           headers: self.headers
       ) rescue nil
     end
     alias_method :temp_high=, :temperature_high=
 
-    def target_temperature_at
-      epoch = status["device"][self.device_id]["time_to_target"]
+    def target_temperature_at(device_id_number = nil)
+      device_id_number = self.device_id if !device_id_number
+      epoch = status["device"][device_id_number]["time_to_target"]
       epoch != 0 ? Time.at(epoch) : false
     end
     alias_method :target_temp_at, :target_temperature_at
@@ -175,7 +198,7 @@ module NestThermostat
                       )
 
       @auth ||= JSON.parse(login_request.body) rescue nil
-      raise 'Invalid login credentials' if auth.has_key?('error') && @auth['error'] == "access_denied"
+      raise 'Invalid login credentials' if @auth.has_key?('error') && @auth['error'] == "access_denied"
     end
 
     def convert_temp_for_get(degrees)

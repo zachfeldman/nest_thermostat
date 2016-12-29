@@ -1,0 +1,4 @@
+nest = Nest::Client.new(username, password)
+thermostats = nest.thermostats
+
+stats[0].temperature
